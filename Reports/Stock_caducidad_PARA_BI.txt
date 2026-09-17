@@ -1,0 +1,154 @@
+================================================================================
+STOCK Y CADUCIDAD — Codigo para montar en Power BI (mas adelante)
+Proyecto: C:\Users\ACZ\Downloads\Proyectos\stock
+Excel actual: C:\Users\ACZ\Downloads\Proyectos\stock\Reports\Stock_caducidad.xlsm
+Fecha doc: 2026-08-26
+================================================================================
+
+1) REGLA DE NEGOCIO (OBLIGATORIA)
+---------------------------------
+Fuente unica: bc.[Item Ledger Entry]
+
+Filtro fijo:
+  - Open = 1
+  - Remaining Quantity = 1   <<-- esto es "Cajas pendientes = 1"
+
+Stock disponible = campo [Kilos] de la misma linea ILE.
+NO usar Inventory / Value Entry / otras tablas para el stock.
+
+
+2) SEMAFORO / ESTADO CADUCIDAD
+------------------------------
+Calculado respecto a HOY (GETDATE):
+
+  Caducado            -> dias < 0
+  Proximo a caducar   -> dias entre 0 y 7
+  En seguimiento      -> dias entre 8 y 15
+  Correcto            -> dias > 15
+  Sin fecha           -> Expiration Date vacia o year < 1900
+
+Colores sugeridos (Stolt):
+  ROJO     RGB(192,0,0)      Caducado
+  NARANJA  RGB(237,125,49)   Proximo a caducar
+  AMARILLO RGB(255,192,0)    En seguimiento
+  VERDE    RGB(84,130,53)    Correcto
+  GRIS     RGB(127,127,127)  Sin fecha
+
+
+3) QUERY SQL (Power Query / Dataset / Fabric / SSAS)
+----------------------------------------------------
+-- Archivo tambien en: sql\stock_ile.sql
+
+SELECT
+    ile.[Location Code] AS Almacen,
+    ile.[Item No.] AS Item,
+    ile.[Description] AS Producto,
+    CAST(ile.[Kilos] AS float) AS [Stock disponible (kg)],
+    CAST(ile.[Fecha despesque] AS date) AS [Fecha despesque],
+    CAST(ile.[Fecha empaque] AS date) AS [Fecha empaque],
+    CASE
+        WHEN ile.[Expiration Date] IS NULL OR YEAR(ile.[Expiration Date]) < 1900 THEN NULL
+        ELSE CAST(ile.[Expiration Date] AS date)
+    END AS [Fecha caducidad],
+    CAST(ile.[Remaining Quantity] AS float) AS [Cajas pendientes],
+    CASE
+        WHEN ile.[Expiration Date] IS NULL OR YEAR(ile.[Expiration Date]) < 1900 THEN NULL
+        ELSE DATEDIFF(day, CAST(GETDATE() AS date), CAST(ile.[Expiration Date] AS date))
+    END AS [Dias restantes],
+    CASE
+        WHEN ile.[Expiration Date] IS NULL OR YEAR(ile.[Expiration Date]) < 1900 THEN N'Sin fecha'
+        WHEN DATEDIFF(day, CAST(GETDATE() AS date), CAST(ile.[Expiration Date] AS date)) < 0 THEN N'Caducado'
+        WHEN DATEDIFF(day, CAST(GETDATE() AS date), CAST(ile.[Expiration Date] AS date)) <= 7 THEN N'Proximo a caducar'
+        WHEN DATEDIFF(day, CAST(GETDATE() AS date), CAST(ile.[Expiration Date] AS date)) <= 15 THEN N'En seguimiento'
+        ELSE N'Correcto'
+    END AS [Estado caducidad]
+FROM bc.[Item Ledger Entry] AS ile
+WHERE ile.[Open] = 1
+  AND ile.[Remaining Quantity] = 1;
+
+
+4) AGREGADO PARA DASHBOARD POR ALMACEN (como el Excel)
+------------------------------------------------------
+En Power BI / DAX o en SQL, agrupar por:
+
+  Almacen + Item + Producto + Fecha despesque + Fecha caducidad + Estado caducidad
+
+Medidas:
+  Cajas = SUM( [Cajas pendientes] )   -- cada linea ILE filtrada vale 1
+  Kg    = SUM( [Stock disponible (kg)] )
+  Lineas / productos distintos segun haga falta
+
+Filtro tipico de paginas BI:
+  Almacen IN ( "E", "G", "J", "V3", "W" )
+
+
+5) MEDIDAS DAX DE EJEMPLO (cuando montes el modelo)
+--------------------------------------------------
+Cajas =
+SUM ( StockILE[Cajas pendientes] )
+
+Kg =
+SUM ( StockILE[Stock disponible (kg)] )
+
+Cajas caducadas =
+CALCULATE ( [Cajas], StockILE[Estado caducidad] = "Caducado" )
+
+Cajas proximas =
+CALCULATE ( [Cajas], StockILE[Estado caducidad] = "Proximo a caducar" )
+
+Cajas en seguimiento =
+CALCULATE ( [Cajas], StockILE[Estado caducidad] = "En seguimiento" )
+
+Cajas correctas =
+CALCULATE ( [Cajas], StockILE[Estado caducidad] = "Correcto" )
+
+% Caducado =
+DIVIDE ( [Cajas caducadas], [Cajas] )
+
+
+6) POWER QUERY (M) — esqueleto
+------------------------------
+En Power BI Desktop:
+  Obtener datos > SQL Server / Azure SQL
+  Pegar la query del apartado 3 (o apuntar a una vista)
+
+Vista recomendada (crear en BC SQL cuando se pueda):
+  CREATE VIEW bc.vw_StockCaducidadILE AS <query del apartado 3>;
+
+Luego en Power BI:
+  - Columna Estado caducidad -> leyenda de color (formato condicional)
+  - Segmentador Almacen
+  - Visual tarjetas: Cajas caducadas / proximas / seguimiento / correctas
+  - Tabla: Item, Producto, Fecha despesque, Fecha caducidad, Dias, Cajas, Kg
+
+
+7) ESTRUCTURA ACTUAL DEL EXCEL (referencia UX)
+----------------------------------------------
+Hojas visibles:
+  Actualizar      -> boton "Actualizar todo"
+  Instrucciones   -> manual de uso
+  Alm E / G / J / V3 / W -> dashboard + tabla por producto/fechas
+
+Hojas ocultas (tecnico):
+  Todos, Resumen, Pivot, Parametros, Query, resto de Alm
+
+
+8) CONEXION
+-----------
+Misma base Azure SQL / BC que Biomasa (.env):
+  Server / Database / User / Password
+  Tabla: bc.[Item Ledger Entry]
+
+Credenciales del Excel: hoja Parametros (oculta).
+
+
+9) ARCHIVOS DEL PROYECTO
+------------------------
+C:\Users\ACZ\Downloads\Proyectos\stock\sql\stock_ile.sql
+C:\Users\ACZ\Downloads\Proyectos\stock\StockILE.bas
+C:\Users\ACZ\Downloads\Proyectos\stock\crear_informe_stock.py
+C:\Users\ACZ\Downloads\Proyectos\stock\Reports\Stock_caducidad.xlsm
+
+================================================================================
+Fin del documento
+================================================================================

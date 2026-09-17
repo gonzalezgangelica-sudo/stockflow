@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stock · gestión y análisis</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <aside>
+    <div class="brand">
+      <strong>Stock</strong>
+      <span>Histórico 05:00 · Vivo</span>
+    </div>
+    <nav id="nav"></nav>
+  </aside>
+  <main>
+    <header class="top">
+      <div>
+        <h1 id="title">Dashboard</h1>
+        <p id="subtitle">Stock histórico frente a stock vivo</p>
+      </div>
+      <form id="filters" class="filters">
+        <select name="warehouse" id="warehouse"><option value="">Todos los almacenes</option></select>
+        <input name="product_no" id="product_no" placeholder="Producto / código" />
+        <button type="submit">Filtrar</button>
+        <button type="button" id="btnSnap" class="secondary">Fotografiar ahora</button>
+      </form>
+    </header>
+    <section id="view"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
