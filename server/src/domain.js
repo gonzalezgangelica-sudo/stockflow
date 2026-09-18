@@ -267,10 +267,23 @@ export function splitByWarehouse(rows) {
   });
 }
 
-export function todayISO() {
-  const t = new Date();
-  const z = (n) => String(n).padStart(2, "0");
-  return `${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())}`;
+export function todayISO(timeZone = "Europe/Madrid") {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+export function nowTime(timeZone = "Europe/Madrid") {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
 }
 
 /** El lote es el nº de caja: 1 lote = 1 caja. Se repite si el mismo lote tiene >1 caja o >1 línea. */

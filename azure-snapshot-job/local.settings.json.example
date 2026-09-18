@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "WEBSITE_TIME_ZONE": "Romance Standard Time",
+    "APP_SQL_SERVER": "",
+    "APP_SQL_DATABASE": "SSF_APP_StockFlow",
+    "APP_SQL_USER": "",
+    "APP_SQL_PASSWORD": "",
+    "BC_SERVER": "",
+    "BC_DATABASE": "",
+    "BC_USER": "",
+    "BC_PASSWORD": ""
+  }
+}

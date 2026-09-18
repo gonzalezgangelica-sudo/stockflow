@@ -531,7 +531,7 @@ function StockApp({ onLogout, user }) {
         setContent(
           <Box>
             <Alert severity="info" sx={{ mb: 2 }}>
-              Stock en tiempo real de Business Central. Pulse <b>Actualizar</b> para volver a consultar BC (no usa la foto de las 05:00).
+              Stock en tiempo real de Business Central. Se refresca solo cada 5 minutos (no usa la foto de las 05:00).
             </Alert>
             {!warehouse && <Kpis summary={d.summary} />}
             <WarehouseTables sections={d.warehouses} filename={`StockFlow_vivo_${d.as_of || "hoy"}`} />
@@ -543,7 +543,7 @@ function StockApp({ onLogout, user }) {
         const snaps = await api("/snapshots");
         if (!snaps.length) {
           setSubtitle("Sin fotografías");
-          setContent(<Alert severity="info">No hay fotografías. Pulse «Fotografiar ahora» para crear la de hoy.</Alert>);
+          setContent(<Alert severity="info">No hay fotografías todavía. La foto fija se guarda sola a las 05:00 en Azure.</Alert>);
           return;
         }
         const selected = snaps.find((s) => s.id === snapshotId) || snaps.find((s) => s.status === "OK") || snaps[0];
@@ -924,18 +924,18 @@ function StockApp({ onLogout, user }) {
     render();
   }, [render]);
 
-  async function photograph() {
-    setBusy(true);
-    try {
-      const r = await api("/snapshots/run", { method: "POST" });
-      window.alert(`Fotografía ${r.status}: ${r.date} ${r.time} · ${r.records} registros`);
-      await render();
-    } catch (err) {
-      window.alert(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const renderRef = useRef(render);
+  renderRef.current = render;
+
+  useEffect(() => {
+    const liveViews = ["dashboard", "vivo", "caducidades", "repetidas", "comparacion"];
+    if (!liveViews.includes(view)) return undefined;
+    const id = setInterval(() => {
+      refreshRef.current = true;
+      renderRef.current();
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [view]);
 
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -1001,21 +1001,6 @@ function StockApp({ onLogout, user }) {
             <Button variant="outlined" onClick={render} disabled={busy}>
               {t("filter")}
             </Button>
-            <Button
-              variant={view === "vivo" ? "contained" : "outlined"}
-              onClick={() => {
-                refreshRef.current = true;
-                render();
-              }}
-              disabled={busy}
-            >
-              {t("refresh")}
-            </Button>
-            {user.role === "admin" && (
-              <Button variant="contained" onClick={photograph} disabled={busy}>
-                {t("photograph")}
-              </Button>
-            )}
           </Toolbar>
           {busy && <LinearProgress />}
         </AppBar>

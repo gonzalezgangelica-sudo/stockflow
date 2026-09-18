@@ -39,4 +39,11 @@ export async function ensureSchema() {
   await runQuery(schema);
 }
 
+export async function closePool() {
+  if (pool) {
+    await pool.close();
+    pool = null;
+  }
+}
+
 export { sql };

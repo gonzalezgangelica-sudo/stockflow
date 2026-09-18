@@ -35,12 +35,13 @@ import {
   setAccessRequestStatus,
 } from "./store.js";
 import { bearerToken } from "./auth.js";
+import { runDailySnapshot } from "./snapshot-job.js";
 
 const router = express.Router();
 let liveCache = { at: 0, rows: null };
 
 export const STOCK_DEFINITION =
-  "ILE Open=1 AND Remaining Quantity=1 | kg=Kilos | cajas=Remaining Quantity (informe Power BI / Excel caducidad)";
+  "ILE Open=1 AND Remaining Quantity <> 0 | kg=Kilos | cajas=Remaining Quantity | foto fija en Azure SQL";
 
 async function liveRows(force = false) {
   const now = Date.now();
@@ -72,8 +73,8 @@ function enrichRows(rows, req) {
   );
 }
 
-function enrichSnap(id, req) {
-  return enrichRows(snapshotLines(id), req);
+async function enrichSnap(id, req) {
+  return enrichRows(await snapshotLines(id), req);
 }
 
 function warehousePayload(rows) {
@@ -84,37 +85,65 @@ function warehousePayload(rows) {
   }));
 }
 
+function jobKeyOk(req) {
+  const expected = process.env.SNAPSHOT_JOB_KEY || "";
+  if (!expected) return false;
+  const got = req.get("x-job-key") || "";
+  return got && got === expected;
+}
+
 router.get("/health", (_req, res) => {
-  res.json({ ok: true, engine: "node", bc_configured: Boolean(config.bc.server), definition: STOCK_DEFINITION });
+  res.json({
+    ok: true,
+    engine: "node",
+    storage: "azure-sql",
+    bc_configured: Boolean(config.bc.server),
+    app_sql: Boolean(config.app.server),
+    definition: STOCK_DEFINITION,
+  });
 });
 
-router.post("/auth/login", (req, res) => {
+router.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  const session = loginUser(email, password);
+  const session = await loginUser(email, password);
   if (!session) return res.status(401).json({ detail: "Email o contraseña no válidos" });
   res.json(session);
 });
 
-router.post("/auth/request", (req, res) => {
+router.post("/auth/request", async (req, res) => {
   try {
-    createAccessRequest(req.body || {});
+    await createAccessRequest(req.body || {});
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ detail: err.message });
   }
 });
 
-router.use((req, res, next) => {
-  const session = sessionByToken(bearerToken(req));
-  if (!session) return res.status(401).json({ detail: "No autenticado" });
-  req.user = session.user;
-  next();
+router.post("/snapshots/job", async (req, res) => {
+  if (!jobKeyOk(req)) return res.status(401).json({ detail: "Job key no válida" });
+  try {
+    const snap = await runDailySnapshot(Boolean(req.query.replace || req.body?.replace));
+    res.json(snap);
+  } catch (err) {
+    res.status(500).json({ detail: err.message });
+  }
+});
+
+router.use(async (req, res, next) => {
+  try {
+    const session = await sessionByToken(bearerToken(req));
+    if (!session) return res.status(401).json({ detail: "No autenticado" });
+    req.user = session.user;
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get("/auth/me", (req, res) => res.json({ user: req.user }));
 
-router.post("/auth/logout", (req, res) => {
-  logoutToken(bearerToken(req));
+router.post("/auth/logout", async (req, res) => {
+  await logoutToken(bearerToken(req));
   res.json({ ok: true });
 });
 
@@ -123,30 +152,29 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-router.get("/users", requireAdmin, (_req, res) => {
-  res.json({ users: listUsers(), requests: listAccessRequests() });
+router.get("/users", requireAdmin, async (_req, res) => {
+  res.json({ users: await listUsers(), requests: await listAccessRequests() });
 });
 
-router.post("/users", requireAdmin, (req, res) => {
+router.post("/users", requireAdmin, async (req, res) => {
   try {
-    const user = createUser(req.body || {});
-    res.json(user);
+    res.json(await createUser(req.body || {}));
   } catch (err) {
     res.status(400).json({ detail: err.message });
   }
 });
 
-router.patch("/users/:id", requireAdmin, (req, res) => {
+router.patch("/users/:id", requireAdmin, async (req, res) => {
   try {
-    res.json(updateUser(Number(req.params.id), req.body || {}));
+    res.json(await updateUser(Number(req.params.id), req.body || {}));
   } catch (err) {
     res.status(400).json({ detail: err.message });
   }
 });
 
-router.patch("/access-requests/:id", requireAdmin, (req, res) => {
+router.patch("/access-requests/:id", requireAdmin, async (req, res) => {
   const status = req.body?.status === "rejected" ? "rejected" : "approved";
-  setAccessRequestStatus(Number(req.params.id), status);
+  await setAccessRequestStatus(Number(req.params.id), status);
   res.json({ ok: true });
 });
 
@@ -155,7 +183,7 @@ router.get("/config", (_req, res) => res.json(getConfig()));
 router.get("/stock/live", async (req, res) => {
   try {
     const rows = enrichRows(await liveRows(wantRefresh(req)), req);
-    const last = latestOkSnapshot();
+    const last = await latestOkSnapshot();
     res.json({
       source: "live",
       as_of: todayISO(),
@@ -180,11 +208,11 @@ router.get("/dashboard", async (req, res) => {
   } catch (err) {
     liveOk = false;
     liveError = err.message;
-    const last = latestOkSnapshot();
-    if (last) live = enrichSnap(last.id, req);
+    const last = await latestOkSnapshot();
+    if (last) live = await enrichSnap(last.id, req);
   }
-  const last = latestOkSnapshot();
-  const initial = last ? enrichSnap(last.id, req) : [];
+  const last = await latestOkSnapshot();
+  const initial = last ? await enrichSnap(last.id, req) : [];
   const liveSum = summarize(live);
   const initSum = initial.length ? summarize(initial) : null;
   res.json({
@@ -194,7 +222,7 @@ router.get("/dashboard", async (req, res) => {
     initial: initSum,
     variation_kg: initSum ? Math.round((liveSum.kg - initSum.kg) * 10) / 10 : null,
     warehouses: liveSum.by_warehouse,
-    evolution: evolution(Number(req.query.days || 30), req.query.warehouse || "", req.query.product_no || ""),
+    evolution: await evolution(Number(req.query.days || 30), req.query.warehouse || "", req.query.product_no || ""),
     snapshot_date: last?.snapshot_date || null,
     definition: STOCK_DEFINITION,
     duplicates: ((d) => ({
@@ -207,12 +235,12 @@ router.get("/dashboard", async (req, res) => {
   });
 });
 
-router.get("/snapshots", (_req, res) => res.json(listSnapshots()));
+router.get("/snapshots", async (_req, res) => res.json(await listSnapshots()));
 
-router.get("/snapshots/:id", (req, res) => {
-  const snap = getSnapshot(Number(req.params.id));
+router.get("/snapshots/:id", async (req, res) => {
+  const snap = await getSnapshot(Number(req.params.id));
   if (!snap) return res.status(404).json({ detail: "Fotografia no encontrada" });
-  const rows = enrichSnap(snap.id, req);
+  const rows = await enrichSnap(snap.id, req);
   res.json({
     id: snap.id,
     date: snap.snapshot_date,
@@ -224,41 +252,21 @@ router.get("/snapshots/:id", (req, res) => {
   });
 });
 
-async function runSnapshot(replace = false) {
-  const now = new Date();
-  const date = todayISO();
-  const time = now.toTimeString().slice(0, 8);
-  try {
-    const rows = await liveRows(true);
-    return saveSnapshot(date, time, rows, { replace });
-  } catch (err) {
-    saveErrorSnapshot(date, time, err.message);
-    throw err;
-  }
-}
-
 router.post("/snapshots/run", requireAdmin, async (req, res) => {
   try {
-    const snap = await runSnapshot(Boolean(req.query.replace || req.body?.replace));
-    res.json({
-      id: snap.id,
-      date: snap.snapshot_date,
-      time: snap.snapshot_time,
-      status: snap.status,
-      records: snap.records_processed,
-      error: snap.error_message,
-    });
+    const snap = await runDailySnapshot(Boolean(req.query.replace || req.body?.replace));
+    res.json(snap);
   } catch (err) {
     res.status(500).json({ detail: err.message });
   }
 });
 
 router.get("/compare", async (req, res) => {
-  const last = latestOkSnapshot();
+  const last = await latestOkSnapshot();
   if (!last) return res.status(404).json({ detail: "No hay fotografia historica todavia" });
   try {
     const live = enrichRows(await liveRows(wantRefresh(req)), req);
-    const initial = enrichSnap(last.id, req);
+    const initial = await enrichSnap(last.id, req);
     res.json({
       snapshot_date: last.snapshot_date,
       snapshot_time: last.snapshot_time,
@@ -271,8 +279,8 @@ router.get("/compare", async (req, res) => {
   }
 });
 
-router.get("/evolution", (req, res) => {
-  const points = evolution(Number(req.query.days || 30), req.query.warehouse || "", req.query.product_no || "");
+router.get("/evolution", async (req, res) => {
+  const points = await evolution(Number(req.query.days || 30), req.query.warehouse || "", req.query.product_no || "");
   const movement = points.map((p, i) => ({
     date: p.date,
     stock_inicial: i ? points[i - 1].kg : null,
@@ -283,9 +291,9 @@ router.get("/evolution", (req, res) => {
 });
 
 router.get("/analysis/packing", async (req, res) => {
-  const last = latestOkSnapshot();
+  const last = await latestOkSnapshot();
   let rows;
-  if (last) rows = enrichSnap(last.id, req);
+  if (last) rows = await enrichSnap(last.id, req);
   else rows = enrichRows(await liveRows(wantRefresh(req)), req);
   res.json({ packing: packingAnalysis(rows), age: ageAnalysis(rows) });
 });
@@ -295,9 +303,9 @@ router.get("/analysis/duplicates", async (req, res) => {
   try {
     rows = enrichRows(await liveRows(wantRefresh(req)), req);
   } catch {
-    const last = latestOkSnapshot();
+    const last = await latestOkSnapshot();
     if (!last) return res.status(503).json({ detail: "Sin stock vivo ni historico" });
-    rows = enrichSnap(last.id, req);
+    rows = await enrichSnap(last.id, req);
   }
   res.json(findRepeatedBoxes(rows));
 });
@@ -307,9 +315,9 @@ router.get("/expiry", async (req, res) => {
   try {
     rows = enrichRows(await liveRows(wantRefresh(req)), req);
   } catch {
-    const last = latestOkSnapshot();
+    const last = await latestOkSnapshot();
     if (!last) return res.status(503).json({ detail: "Sin stock vivo ni historico" });
-    rows = enrichSnap(last.id, req);
+    rows = await enrichSnap(last.id, req);
   }
   const interesting = rows
     .filter((r) => ["Caducado", "Proximo a caducar", "En seguimiento", "Sin fecha"].includes(r.expiry_status))
@@ -317,11 +325,11 @@ router.get("/expiry", async (req, res) => {
   res.json({ summary: summarize(rows), rows: interesting.slice(0, 800) });
 });
 
-router.get("/logs", (_req, res) => res.json(listLogs()));
+router.get("/logs", async (_req, res) => res.json(await listLogs()));
 
 export function startJobs() {
   const spec = `${config.snapshotMinute} ${config.snapshotHour} * * *`;
-  cron.schedule(spec, () => runSnapshot(false).catch((err) => console.error("snapshot job", err)), {
+  cron.schedule(spec, () => runDailySnapshot(false).catch((err) => console.error("snapshot job", err)), {
     timezone: config.timezone,
   });
 }

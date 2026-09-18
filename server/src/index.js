@@ -3,6 +3,9 @@ import cors from "cors";
 import path from "node:path";
 import { config, ROOT } from "./config.js";
 import router, { startJobs } from "./routes.js";
+import { initStore } from "./store.js";
+
+await initStore();
 
 const app = express();
 app.use(cors());
@@ -17,7 +20,8 @@ app.get(/^(?!\/api).*/, (_req, res) => {
   });
 });
 
-startJobs();
+if (process.env.SNAPSHOT_LOCAL_CRON === "1") startJobs();
 app.listen(config.port, config.host, () => {
-  console.log(`Stock Flow en http://${config.host}:${config.port} (foto fija 05:00 ${config.timezone})`);
+  const where = process.env.SNAPSHOT_LOCAL_CRON === "1" ? "cron local + Azure SQL" : "Azure Function 05:00 + Azure SQL";
+  console.log(`Stock Flow en http://${config.host}:${config.port} (${where})`);
 });
