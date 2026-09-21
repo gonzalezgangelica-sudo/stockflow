@@ -1,0 +1,36 @@
+# Foto fija diaria 05:00 Europe/Madrid (cron en UTC: 03:00 en horario de verano).
+trigger: none
+pr: none
+
+schedules:
+  - cron: "0 3 * * *"
+    displayName: Foto fija 05:00 Europe/Madrid
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: "22.x"
+    displayName: Instalar Node.js
+
+  - script: |
+      npm ci
+      node src/snapshot-job.js
+    workingDirectory: server
+    displayName: Guardar foto fija en Azure SQL
+    env:
+      APP_SQL_SERVER: $(APP_SQL_SERVER)
+      APP_SQL_DATABASE: $(APP_SQL_DATABASE)
+      APP_SQL_USER: $(APP_SQL_USER)
+      APP_SQL_PASSWORD: $(APP_SQL_PASSWORD)
+      BC_SERVER: $(BC_SERVER)
+      BC_DATABASE: $(BC_DATABASE)
+      BC_USER: $(BC_USER)
+      BC_PASSWORD: $(BC_PASSWORD)
+      TIMEZONE: Europe/Madrid
