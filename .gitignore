@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 data/
 !data/.gitkeep
 backend/.venv/
@@ -12,6 +14,13 @@ frontend/dist/
 server/node_modules/
 azure-snapshot-job/node_modules/
 azure-snapshot-job/local.settings.json
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+infrastructure/common/
 _probe_ile.py
 _reimport_y_actualizar.py
 _finish_ui.py
